@@ -21,6 +21,7 @@ place where this information is gathered.
    landlock
    unshare
    spec_ctrl
+   ntsync
    accelerators/ocxl
    ebpf/index
    ioctl/index
