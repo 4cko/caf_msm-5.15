@@ -21,6 +21,7 @@
  *  Copyright (C) 2007 Red Hat, Inc., Peter Zijlstra
  */
 #include "sched.h"
+#include <linux/prefer_silver.h>
 
 #include <trace/hooks/sched.h>
 
@@ -7278,6 +7279,13 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 	}
 	rcu_read_unlock();
 
+#ifdef CONFIG_SCHED_PREFER_SILVER
+	if (prefer_silver_check_task_util(p)) {
+		int silver_cpu = find_best_silver_cpu(p);
+		if (silver_cpu >= 0)
+			return silver_cpu;
+	}
+#endif /* CONFIG_SCHED_PREFER_SILVER */
 	return new_cpu;
 }
 
