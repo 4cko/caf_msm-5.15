@@ -39,6 +39,8 @@
  *  v2.0.0 - Included State Notifier hooks to run explicitly once power state changes
  *	     are completed to prevent blocking issues.
  *
+ *  v2.1   - Fully migrated to standard kernel logging (pr_info/pr_debug).
+ *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -55,24 +57,9 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
-#ifdef CONFIG_STATE_NOTIFIER
-#include <linux/state_notifier.h>
-#endif
 
-#define MAJOR_VERSION	2
-#define MINOR_VERSION	0
-
-/*
- * debug = 1 will print all
- */
-static unsigned int debug = 0;
-module_param_named(debug_mask, debug, uint, 0644);
-
-#define dprintk(msg...)		\
-do { 				\
-	if (debug)		\
-		pr_info(msg);	\
-} while (0)
+#define MAJOR_VERSION   2
+#define MINOR_VERSION   1
 
 struct workqueue_struct *suspend_work_queue;
 
@@ -111,7 +98,7 @@ static void power_suspend(struct work_struct *work)
     unsigned long irqflags;
     int abort = 0;
 
-    dprintk("[POWERSUSPEND] entering suspend...\n");
+    pr_debug("[POWERSUSPEND] entering suspend...\n");
     mutex_lock(&power_suspend_lock);
     spin_lock_irqsave(&state_lock, irqflags);
     if (state == POWER_SUSPEND_INACTIVE)
@@ -121,16 +108,14 @@ static void power_suspend(struct work_struct *work)
     if (abort)
         goto abort_suspend;
 
-    dprintk("[POWERSUSPEND] suspending...\n");
+    pr_debug("[POWERSUSPEND] suspending...\n");
     list_for_each_entry(pos, &power_suspend_handlers, link) {
         if (pos->suspend != NULL) {
             pos->suspend(pos);
         }
     }
     pr_info("[POWERSUSPEND] suspend completed.\n");
-#ifdef CONFIG_STATE_NOTIFIER
-    state_suspend();
-#endif
+
 abort_suspend:
     mutex_unlock(&power_suspend_lock);
 }
@@ -141,7 +126,7 @@ static void power_resume(struct work_struct *work)
     unsigned long irqflags;
     int abort = 0;
 
-    dprintk("[POWERSUSPEND] entering resume...\n");
+    pr_debug("[POWERSUSPEND] entering resume...\n");
     mutex_lock(&power_suspend_lock);
     spin_lock_irqsave(&state_lock, irqflags);
     if (state == POWER_SUSPEND_ACTIVE)
@@ -151,16 +136,14 @@ static void power_resume(struct work_struct *work)
     if (abort)
         goto abort_resume;
 
-    dprintk("[POWERSUSPEND] resuming...\n");
+    pr_debug("[POWERSUSPEND] resuming...\n");
     list_for_each_entry_reverse(pos, &power_suspend_handlers, link) {
         if (pos->resume != NULL) {
             pos->resume(pos);
         }
     }
     pr_info("[POWERSUSPEND] resume completed.\n");
-#ifdef CONFIG_STATE_NOTIFIER
-    state_resume();
-#endif
+
 abort_resume:
     mutex_unlock(&power_suspend_lock);
 }
@@ -174,12 +157,12 @@ void set_power_suspend_state(int new_state)
     if (state != new_state) {
         spin_lock_irqsave(&state_lock, irqflags);
         if (state == POWER_SUSPEND_INACTIVE && new_state == POWER_SUSPEND_ACTIVE) {
-            dprintk("[POWERSUSPEND] state activated.\n");
+            pr_debug("[POWERSUSPEND] state activated.\n");
             state = new_state;
             power_suspended = true;
             schedule_work(&power_suspend_work);
         } else if (state == POWER_SUSPEND_ACTIVE && new_state == POWER_SUSPEND_INACTIVE) {
-            dprintk("[POWERSUSPEND] state deactivated.\n");
+            pr_debug("[POWERSUSPEND] state deactivated.\n");
             state = new_state;
             power_suspended = false;
             schedule_work(&power_resume_work);
@@ -192,7 +175,7 @@ void set_power_suspend_state(int new_state)
 
 void set_power_suspend_state_autosleep_hook(int new_state)
 {
-    dprintk("[POWERSUSPEND] autosleep resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
+    pr_debug("[POWERSUSPEND] autosleep resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
     // Only allow autosleep hook changes in autosleep & hybrid mode
     if (mode == POWER_SUSPEND_AUTOSLEEP || mode == POWER_SUSPEND_HYBRID)
         set_power_suspend_state(new_state);
@@ -202,7 +185,7 @@ EXPORT_SYMBOL(set_power_suspend_state_autosleep_hook);
 
 void set_power_suspend_state_panel_hook(int new_state)
 {
-    dprintk("[POWERSUSPEND] panel resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
+    pr_debug("[POWERSUSPEND] panel resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
     // Only allow autosleep hook changes in autosleep & hybrid mode
     if (mode == POWER_SUSPEND_AUTOSLEEP || mode == POWER_SUSPEND_HYBRID)
         set_power_suspend_state(new_state);
@@ -230,7 +213,7 @@ static ssize_t power_suspend_state_store(struct kobject *kobj,
     if (kstrtoint(buf, 10, &new_state) < 0)
         return -EINVAL;
 
-    dprintk("[POWERSUSPEND] userspace resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
+    pr_debug("[POWERSUSPEND] userspace resquests %s.\n", new_state == POWER_SUSPEND_ACTIVE ? "sleep" : "wakeup");
     if(new_state == POWER_SUSPEND_ACTIVE || new_state == POWER_SUSPEND_INACTIVE)
         set_power_suspend_state(new_state);
 
