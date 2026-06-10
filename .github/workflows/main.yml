@@ -1,0 +1,84 @@
+name: Kernel Builder and Release
+
+on:
+  push:
+    branches:
+      - Miku
+      - kernel.lnx.5.15.r1-rel
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag'
+        required: true
+        default: 'v1.0.0'
+      release_name:
+        description: 'Release title'
+        required: false
+        default: 'Kernel Release'
+      release_body:
+        description: 'Release notes'
+        required: false
+        default: 'Automated kernel build release'
+      draft:
+        description: 'Create draft release?'
+        required: false
+        default: 'false'
+      prerelease:
+        description: 'Create prerelease?'
+        required: false
+        default: 'false'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ARCH: arm64
+      O: out
+      CC: clang
+      LLVM: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libelf-dev libssl-dev python3 python3-distutils clang lld ccache rsync
+
+      - name: Prepare build output
+        run: mkdir -p out
+
+      - name: Build kernel
+        run: |
+          make -j1 ARCH=arm64 O=out gki_defconfig
+          make -j$(nproc) ARCH=arm64 O=out CC=clang LLVM=1 Image modules dtbs
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: |
+            out/arch/arm64/boot/Image
+            out/vmlinux
+            out/System.map
+            out/arch/arm64/boot/dts/**/*.dtb
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_name || github.ref_name }}
+          body: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_body || 'Automated kernel build release' }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || 'false' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease || 'false' }}
+          files: |
+            out/arch/arm64/boot/Image
+            out/vmlinux
+            out/System.map
+            out/arch/arm64/boot/dts/**/*.dtb
