@@ -64,7 +64,7 @@ jobs:
             python3 \
             pkg-config \
             libelf-dev \
-            pahole
+            pahole && timedatectl set-timezone Asia/Jakarta
       
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
