@@ -38,8 +38,7 @@ else
 	LINUX_COMPILE_HOST=$KBUILD_BUILD_HOST
 fi
 
-LINUX_COMPILE_BY="Rapli"
-LINUX_COMPILE_HOST="NyarchLinux"
+# Use the detected or provided build user/host (do not override)
 
 UTS_VERSION="#$VERSION"
 CONFIG_FLAGS=""
