@@ -33,8 +33,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ubuntu:24.04
     
     permissions:
       contents: read
