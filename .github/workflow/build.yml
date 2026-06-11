@@ -1,0 +1,191 @@
+name: MikuKernel Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    tags:
+      - 'v*'
+      - 'release-*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      build_arch:
+        description: 'Architecture to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - arm64
+          - arm
+          - both
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            libssl-dev \
+            bc \
+            flex \
+            bison \
+            git \
+            curl \
+            wget \
+            clang \
+            llvm \
+            lld \
+            ccache \
+            python3 \
+            pkg-config \
+            libelf-dev \
+            pahole
+      
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kernel-build-${{ github.ref }}
+          max-size: 2G
+      
+      - name: Generate kernel label
+        id: kernel_label
+        run: |
+          LABEL=$(bash scripts/generate_kernel_label.sh)
+          echo "label=$LABEL" >> $GITHUB_OUTPUT
+          echo "Kernel label: $LABEL"
+      
+      - name: Create build info
+        run: |
+          cat > BUILD_INFO.md << 'EOF'
+          # MikuKernel Build Information
+          
+          - **Build Date**: ${{ job.started_at }}
+          - **Kernel Label**: ${{ steps.kernel_label.outputs.label }}
+          - **Git Commit**: ${{ github.sha }}
+          - **Git Ref**: ${{ github.ref }}
+          - **Triggered by**: ${{ github.actor }}
+          EOF
+      
+      - name: Determine build architecture
+        id: build_arch
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ARCH="${{ github.event.inputs.build_arch }}"
+          else
+            ARCH="both"
+          fi
+          echo "arch=$ARCH" >> $GITHUB_OUTPUT
+          echo "Build architecture: $ARCH"
+      
+      - name: Build kernel
+        run: |
+          ARCH="${{ steps.build_arch.outputs.arch }}"
+          if [ "$ARCH" = "both" ]; then
+            bash build-kernel.sh --both --variant gki --jobs $(nproc) --out-dir out --dist-dir dist
+          else
+            bash build-kernel.sh --arch "$ARCH" --variant gki --jobs $(nproc) --out-dir out --dist-dir dist
+          fi
+      
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          if [ -d dist/arm64 ]; then
+            cp -r dist/arm64/* artifacts/ || true
+          fi
+          if [ -d dist/arm ]; then
+            cp -r dist/arm/* artifacts/ || true
+          fi
+          cp BUILD_INFO.md artifacts/ 2>/dev/null || true
+          cp dist/BUILD_INFO.txt artifacts/ 2>/dev/null || true
+          find artifacts -maxdepth 1 -type f | sort
+
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mikukernel-${{ steps.kernel_label.outputs.label }}
+          path: artifacts/
+          retention-days: 30
+      
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: mikukernel-${{ steps.kernel_label.outputs.label }}
+          name: MikuKernel Release ${{ steps.kernel_label.outputs.label }}
+          files: artifacts/*
+          draft: false
+          prerelease: ${{ contains(github.ref, 'pre') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          body: |
+            # MikuKernel Release
+            
+            **Kernel Label**: `${{ steps.kernel_label.outputs.label }}`
+            **Build Architecture**: `${{ steps.build_arch.outputs.arch }}`
+            **Git Commit**: `${{ github.sha }}`
+            
+            ## Build Information
+            
+            This release contains pre-built kernel images for ARM64 and/or ARM32 architectures.
+            
+            ### Files Included
+            
+            - `Image-arm64-*` or `Image-arm64-*.gz` - ARM64 kernel images
+            - `zImage-arm-*` / `Image-arm-*` - ARM32 kernel images
+            - `System.map-*` - Kernel symbol maps
+            - `.config-*` - Kernel configuration files
+            - `BUILD_INFO.txt` - Build metadata
+            
+            ## Usage
+            
+            ```bash
+            # For ARM64 (64-bit)
+            dd if=Image-arm64-${{ steps.kernel_label.outputs.label }} of=/dev/kernel_partition
+            
+            # For ARM32 (32-bit)
+            dd if=zImage-arm-${{ steps.kernel_label.outputs.label }} of=/dev/kernel_partition
+            ```
+            
+            ${{ github.event.head_commit.message }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+  notify:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Build Status
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "✅ Build completed successfully!"
+          else
+            echo "❌ Build failed!"
+            exit 1
+          fi
