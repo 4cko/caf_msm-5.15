@@ -1,0 +1,80 @@
+name: Sync Google GKI android13-5.15 patches (monthly)
+
+on:
+  schedule:
+    # 03:00 UTC pada tanggal 1 setiap bulan
+    - cron: '0 3 1 * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag Google tertentu (opsional, contoh: android13-5.15.216_r00). Kosongkan = otomatis terbaru.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine current Google base from Makefile
+        id: cur
+        run: |
+          LEVEL=$(grep -E '^SUBLEVEL = ' Makefile | awk '{print $3}')
+          echo "tag=android13-5.15.${LEVEL}_r00" >> "$GITHUB_OUTPUT"
+          echo "Current base: android13-5.15.${LEVEL}_r00"
+
+      - name: Find latest Google tag
+        id: latest
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG=$(git ls-remote --tags https://android.googlesource.com/kernel/common \
+              | grep -oE 'android13-5\.15\.[0-9]+_r00$' | sort -Vu | tail -1)
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Target: $TAG"
+
+      - name: Check if already up to date
+        id: diff
+        run: |
+          if [ "${{ steps.cur.outputs.tag }}" = "${{ steps.latest.outputs.tag }}" ]; then
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "uptodate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch Google tag
+        if: steps.diff.outputs.uptodate == 'false'
+        run: |
+          git remote add google https://android.googlesource.com/kernel/common || true
+          git fetch google refs/tags/${{ steps.latest.outputs.tag }}:refs/tags/${{ steps.latest.outputs.tag }}
+
+      - name: Merge latest Google patches
+        if: steps.diff.outputs.uptodate == 'false'
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge --no-edit ${{ steps.latest.outputs.tag }}; then
+            echo "conflicted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflicted=true" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Push merged branch
+        if: steps.diff.outputs.uptodate == 'false' && steps.merge.outputs.conflicted == 'false'
+        run: git push origin HEAD:${{ github.ref_name }}
+
+      - name: Report up to date
+        if: steps.diff.outputs.uptodate == 'true'
+        run: echo "Kernel sudah versi terbaru (${{ steps.cur.outputs.tag }})."
